@@ -1,7 +1,12 @@
 use axum::{Router, routing::get};
 mod views;
+mod database;
 #[tokio::main]
 async fn main() {
+
+    if !database::database_exists().expect("Failed to check database exsistence"){
+        println!("database does not exist");
+    }
 
     let app = Router::new().route("/",get(views::hello_world));
 
