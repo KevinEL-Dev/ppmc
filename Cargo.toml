@@ -7,7 +7,9 @@ edition = "2024"
 anyhow = "1.0.102"
 axum = "0.8.9"
 directories = "6.0.0"
+futures-util = "0.3.32"
 maud = { version = "0.27.0", features = ["axum"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1.52.1", features = ["macros", "rt-multi-thread"] }

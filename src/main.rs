@@ -13,8 +13,6 @@ mod handlers;
 async fn main() {
 
     if !database::database_exists().expect("Failed to check database exsistence"){
-        // create the database
-        println!("creating database...");
         if let Err(err) = database::init_database().await{
             println!("{err}");
         };
@@ -28,6 +26,10 @@ async fn main() {
         .route("/",get(views::hello_world))
         .route("/create_source",post(handlers::create_source))
         .route("/create_measurement_unit",post(handlers::create_measurement_unit))
+        .route("/create_meal",post(handlers::create_meal))
+        .route("/create_ingredient",post(handlers::create_ingredient))
+        .route("/create_meal_to_ingredient",post(handlers::create_meal_to_ingredient))
+        .route("/get_meal_price",get(handlers::get_meal_price))
         .with_state(state);
 
     let listner = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
