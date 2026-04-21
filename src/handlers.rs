@@ -1,6 +1,6 @@
 // this will be where we create operations for getting and posting information
 use axum::extract::{Json, State, Query};
-use serde::Deserialize;
+use serde::{Serialize,Deserialize};
 use serde_json::{Value,json};
 use std::collections::HashMap;
 use futures_util::TryStreamExt;
@@ -13,7 +13,16 @@ use sqlx::{
 pub struct AppState{
     pub pool: Pool<Sqlite>
 }
-
+#[derive(sqlx::FromRow,Serialize)]
+pub struct FoundSources {
+    id: i64,
+    name: String,
+    brand: String
+}
+#[derive(Debug,Deserialize)]
+pub struct SearchSourcesParam {
+    pattern: String
+}
 #[derive(Debug,Deserialize)]
 pub struct CreateIngredient {
     name: String,
@@ -23,6 +32,11 @@ pub struct CreateIngredient {
     price: f64
 }
 
+#[derive(Debug,Deserialize)]
+pub struct GetIngredientPriceParam {
+    source_id: i64,
+    amount: i64
+}
 #[derive(Debug,Deserialize)]
 pub struct GetMealPriceParam {
     meal_id: i64
@@ -41,8 +55,8 @@ pub struct CreateSource {
     name: String,
     brand: String,
     price: f64,
-    servings_per_container: i64,
-    serving_size: i64,
+    servings_per_container: f64,
+    serving_size: f64,
     measurement_unit_id: i64,
 }
 #[derive(Debug,Deserialize)]
@@ -86,16 +100,6 @@ pub async fn create_meal_to_ingredient(State(state): State<AppState>,Json(payloa
         .execute(&state.pool).await.unwrap();
 }
 
-// ### get request calculate_meal_price
-//
-// cmp route will search the meal_to_ingredient table. it will basically query this
-// ```SELECT ingredient_id FROM meal_to_ingredient WHERE meal_id=1```
-//
-// Then for each row that we retrieved do another query
-//
-// ```SELECT price FROM ingredient WHERE id=<row_id we got from cmp>```
-//
-// for each price just add them all up
 pub async fn get_meal_price(State(state): State<AppState>, Query(params): Query<GetMealPriceParam>) -> Json<f64>{
 
     let mut ingredient_ids = vec![];
@@ -119,4 +123,22 @@ pub async fn get_meal_price(State(state): State<AppState>, Query(params): Query<
         }
     }
     Json(prices)
+}
+pub async fn get_ingredient_price(State(state): State<AppState>, Query(params): Query<GetIngredientPriceParam>) -> Json<f64>{
+    let row: (f64,f64) = sqlx::query_as("SELECT price, total_weight_of_container FROM source WHERE id=?")
+        .bind(params.source_id)
+        .fetch_one(&state.pool).await.unwrap();
+    Json( (row.0 / row.1 ) * (params.amount as f64) )
+}
+// ### get request that searches for sources get_source
+// payload should look like the currently typed field. so everytime the field updates with a new character, make a get request and return the similar values.
+//
+// ```SELECT id, name FROM source WHERE name LIKE '%pattern%'```
+//
+// return a list of potential sources they may be interested in
+pub async fn search_sources(State(state): State<AppState>, Query(params): Query<SearchSourcesParam>) -> Json<Vec< FoundSources >>{
+    let stream = sqlx::query_as::<_, FoundSources>("SELECT id, name, brand FROM source WHERE name=?")
+        .bind(params.pattern)
+        .fetch_all(&state.pool).await.unwrap();
+    Json(stream)
 }

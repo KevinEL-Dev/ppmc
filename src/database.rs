@@ -51,10 +51,10 @@ pub async fn init_database() -> anyhow::Result<()> {
             name TEXT NOT NULL,
             brand TEXT NOT NULL,
             price FLOAT NOT NULL,
-            servings_per_container INTEGER NOT NULL,
-            serving_size INTEGER NOT NULL,
+            servings_per_container FLOAT NOT NULL,
+            serving_size FLOAT NOT NULL,
             measurement_unit_id INT REFERENCES measurement_unit(id) NOT NULL,
-            total_weight_of_container INT GENERATED ALWAYS
+            total_weight_of_container FLOAT GENERATED ALWAYS
                 AS (servings_per_container * serving_size)
         );
     ";
