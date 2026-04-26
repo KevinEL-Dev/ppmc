@@ -1,4 +1,4 @@
-use maud::{html, Markup, DOCTYPE};
+use maud::{html, Markup, DOCTYPE,PreEscaped};
 
 pub async fn hello_world() -> Markup {
     html! {
@@ -6,6 +6,8 @@ pub async fn hello_world() -> Markup {
         script src="/static/htmx.min.js" {}
         h1 {"PPMC"}
 
+        input class="form-control" type="search" name="pattern" placeholder="Begin typing to search for meals..." hx-get="/search_meals" hx-params="*" hx-trigger="input changed delay:500ms, keup[key=='Enter'], load" hx-target="#meal_result" {}
+        div id="meal_result" {}
 /*        form hx-get="/search_sources" hx-target="#result"{
             label for="pattern" {"Search Source "}
             input id="pattern" name="pattern" type="text" {}
@@ -35,14 +37,14 @@ pub async fn hello_world() -> Markup {
             br;
             input type="number"  step="0.01" min="0" id="serving_size" name="serving_size";
             br;
-            label for="measurement_unit" {"Measurement unit"}
+            label for="measurement_unit_name" {"Measurement unit"}
             br;
-            input class="form-control" type="search" list="measurements" name="pattern" hx-get="/search_measurement_units" hx-params="*" hx-trigger="input changed delay:500ms, keyup[key=='Enter'], load" hx-target="#measurements" {}
+            input class="form-control" type="text" list="measurements" name="measurement_unit_name" hx-get="/search_measurement_units" hx-params="*" hx-trigger="input changed delay:500ms, keyup[key=='Enter'], load" hx-target="#measurements" hx-swap="innerHTML"{}
             datalist id="measurements" {}
             br;
             input type="submit" value="Submit";
         }
-        div id="result";
+        div id="result" {}
         br;
         form hx-post="/create_measurement_unit" hx-target="#measurement_unit_result"{
             label for="name" {"Measurement Unit Name"}
@@ -51,7 +53,30 @@ pub async fn hello_world() -> Markup {
             br;
             input type="submit" value="Submit";
         }
-        div id="measurement_unit_result";
+        div id="measurement_unit_result" {}
+        br;
+        form hx-post="/create_meal" hx-target="#meal_result"{
+            label for="name" {"Meal Name"}
+            br;
+            input type="text" id="name" name="name";
+            br;
+            input type="submit" value="Submit";
+        }
+        div id="meal_result" {}
     }
 }
-pub fn render_measurement_unit_search()
+pub fn render_measurement_unit_search(output: &str) -> Markup {
+    html!{
+        (PreEscaped(output))
+    }
+}
+pub fn render_meal_search(output: &str) -> Markup {
+    html!{
+        (PreEscaped(output))
+    }
+}
+pub fn render_source_search(output: &str) -> Markup {
+    html!{
+        (PreEscaped(output))
+    }
+}

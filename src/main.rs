@@ -30,11 +30,9 @@ async fn main() {
         .route("/create_measurement_unit",post(handlers::create_measurement_unit))
         .route("/create_meal",post(handlers::create_meal))
         .route("/create_ingredient",post(handlers::create_ingredient))
-        .route("/create_meal_to_ingredient",post(handlers::create_meal_to_ingredient))
-        .route("/get_meal_price",get(handlers::get_meal_price))
-        .route("/get_ingredient_price",get(handlers::get_ingredient_price))
         .route("/search_sources",get(handlers::search_sources))
         .route("/search_measurement_units",get(handlers::search_measurement_units))
+        .route("/search_meals",get(handlers::search_meals))
         .with_state(state);
 
     let listner = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

@@ -7,6 +7,7 @@ use serde::{Serialize,Deserialize};
 use serde_json::{Value,json};
 use std::collections::HashMap;
 use futures_util::TryStreamExt;
+use crate::views::{render_measurement_unit_search,render_meal_search,render_source_search};
 use sqlx::{
     Row,
     Pool,
@@ -22,21 +23,35 @@ pub struct FoundSources {
     name: String,
     brand: String
 }
+#[derive(sqlx::FromRow,Serialize)]
+pub struct FoundMeasurements {
+    id: i64,
+    name: String
+}
 #[derive(Debug,Deserialize)]
 pub struct SearchSourcesParam {
+    source_name: String
+}
+#[derive(Debug,Deserialize)]
+pub struct SearchMealParam {
     pattern: String
+}
+#[derive(sqlx::FromRow,Serialize)]
+pub struct FoundMeals {
+    id: i64,
+    name: String
 }
 #[derive(Debug,Deserialize)]
 pub struct SearchMeasurementUnitParam {
-    pattern: String
+    measurement_unit_name: String
 }
 #[derive(Debug,Deserialize)]
 pub struct CreateIngredient {
+    meal_id: i64,
     name: String,
-    source_id: i64,
+    source_name: String,
     amount: i64,
-    measurement_unit_id: i64,
-    price: f64
+    measurement_unit_name: String,
 }
 
 #[derive(Debug,Deserialize)]
@@ -64,20 +79,23 @@ pub struct CreateSource {
     price: f64,
     servings_per_container: f64,
     serving_size: f64,
-    measurement_unit_id: i64,
+    measurement_unit_name: String,
 }
 #[derive(Debug,Deserialize)]
 pub struct CreateMeasurementUnit {
     name: String,
 }
 pub async fn create_source(State(state): State<AppState>,Form(source_form): Form<CreateSource>) -> Html<&'static str> {
+    let measurement_unit = sqlx::query_as::<_, FoundMeasurements>("SELECT id, name FROM measurement_unit WHERE name LIKE '%' || $1 || '%'")
+        .bind(source_form.measurement_unit_name)
+        .fetch_one(&state.pool).await.unwrap();
     sqlx::query("INSERT INTO source (name, brand, price, servings_per_container,serving_size,measurement_unit_id) Values ($1, $2, $3, $4, $5, $6)")
         .bind(source_form.name)
         .bind(source_form.brand)
         .bind(source_form.price)
         .bind(source_form.servings_per_container)
         .bind(source_form.serving_size)
-        .bind(source_form.measurement_unit_id)
+        .bind(measurement_unit.id)
         .execute(&state.pool).await.unwrap();
     Html("<p>New source added!</p>")
 }
@@ -88,33 +106,41 @@ pub async fn create_measurement_unit(State(state): State<AppState>,Form(form): F
         .execute(&state.pool).await.unwrap();
     Html("<p>New Measurement Unit added!</p>")
 }
-pub async fn create_meal(State(state): State<AppState>,Json(payload): Json<CreateMeal>){
+pub async fn create_meal(State(state): State<AppState>,Form(form): Form<CreateMeal>){
     sqlx::query("INSERT INTO meal (name) Values ($1)")
-        .bind(payload.name)
+        .bind(form.name)
         .execute(&state.pool).await.unwrap();
 }
-pub async fn create_ingredient(State(state): State<AppState>,Json(payload): Json<CreateIngredient>){
-    sqlx::query("INSERT INTO ingredient (name, source_id, amount, measurement_unit_id, price) Values ($1, $2, $3, $4, $5)")
+pub async fn create_ingredient(State(state): State<AppState>,Form(payload): Form<CreateIngredient>){
+    let source_id = search_one_source(&state.pool,payload.source_name).await;
+    let ingredient_price = get_ingredient_price(&state.pool,source_id,payload.amount).await;
+    let measurement_id = search_one_measurement_unit(&state.pool,payload.measurement_unit_name).await;
+    let result = sqlx::query("INSERT INTO ingredient (name, source_id, amount, measurement_unit_id, price) Values ($1, $2, $3, $4, $5)")
         .bind(payload.name)
-        .bind(payload.source_id)
+        .bind(source_id)
         .bind(payload.amount)
-        .bind(payload.measurement_unit_id)
-        .bind(payload.price)
+        .bind(measurement_id)
+        .bind(ingredient_price)
         .execute(&state.pool).await.unwrap();
+    // search for created ingredient and get the id
+    let new_id = result.last_insert_rowid();
+    println!("new_id is {}", new_id);
+    // then create the mti mapping, passing payload.meal_id and new_ingredient.id
+    create_meal_to_ingredient(&state.pool,payload.meal_id,new_id).await;
 }
-pub async fn create_meal_to_ingredient(State(state): State<AppState>,Json(payload): Json<CreateMealToIngredient>){
+pub async fn create_meal_to_ingredient(pool: &Pool<Sqlite>,meal_id: i64,ingredient_id: i64){
     sqlx::query("INSERT INTO meal_to_ingredient (meal_id, ingredient_id) Values ($1, $2)")
-        .bind(payload.meal_id)
-        .bind(payload.ingredient_id)
-        .execute(&state.pool).await.unwrap();
+        .bind(meal_id)
+        .bind(ingredient_id)
+        .execute(pool).await.unwrap();
 }
 
-pub async fn get_meal_price(State(state): State<AppState>, Query(params): Query<GetMealPriceParam>) -> Json<f64>{
+pub async fn get_meal_price(pool: &Pool<Sqlite>,meal_id: i64) -> f64{
 
     let mut ingredient_ids = vec![];
     let mut rows = sqlx::query("SELECT ingredient_id FROM meal_to_ingredient WHERE meal_id=?")
-        .bind(params.meal_id)
-        .fetch(&state.pool);
+        .bind(meal_id)
+        .fetch(pool);
 
     while let Some(row) = rows.try_next().await.unwrap() {
         let ingredient_id: i64 = row.try_get("ingredient_id").unwrap();
@@ -125,19 +151,19 @@ pub async fn get_meal_price(State(state): State<AppState>, Query(params): Query<
     for id in ingredient_ids {
         let mut rows = sqlx::query("SELECT price FROM ingredient WHERE id=?")
             .bind(id)
-            .fetch(&state.pool);
+            .fetch(pool);
         while let Some(row) = rows.try_next().await.unwrap() {
             let price: f64 = row.try_get("price").unwrap();
             prices += price;
         }
     }
-    Json(prices)
+    prices
 }
-pub async fn get_ingredient_price(State(state): State<AppState>, Query(params): Query<GetIngredientPriceParam>) -> Json<f64>{
+pub async fn get_ingredient_price(pool: &Pool<Sqlite>, source_id: i64, amount: i64) -> f64{
     let row: (f64,f64) = sqlx::query_as("SELECT price, total_weight_of_container FROM source WHERE id=?")
-        .bind(params.source_id)
-        .fetch_one(&state.pool).await.unwrap();
-    Json( (row.0 / row.1 ) * (params.amount as f64) )
+        .bind(source_id)
+        .fetch_one(pool).await.unwrap();
+    (row.0 / row.1 ) * (amount as f64)
 }
 // ### get request that searches for sources get_source
 // payload should look like the currently typed field. so everytime the field updates with a new character, make a get request and return the similar values.
@@ -145,20 +171,86 @@ pub async fn get_ingredient_price(State(state): State<AppState>, Query(params): 
 // ```SELECT id, name FROM source WHERE name LIKE '%pattern%'```
 //
 // return a list of potential sources they may be interested in
-pub async fn search_sources(State(state): State<AppState>, Query(params): Query<SearchSourcesParam>) -> Json<Vec< FoundSources >>{
+pub async fn search_sources(State(state): State<AppState>, Query(params): Query<SearchSourcesParam>) -> impl IntoResponse{
     let sources = sqlx::query_as::<_, FoundSources>("SELECT id, name, brand FROM source WHERE name LIKE '%' || $1 || '%'")
-        .bind(params.pattern)
-        .fetch_all(&state.pool).await.unwrap();
-    Json(sources)
-}
-pub async fn search_measurement_units(State(state): State<AppState>, Query(params): Query<SearchMeasurementUnitParam>) -> String{
-    let sources = sqlx::query_as::<_, FoundSources>("SELECT id, name FROM measurement_unit WHERE name LIKE '%' || $1 || '%'")
-        .bind(params.pattern)
+        .bind(params.source_name)
         .fetch_all(&state.pool).await.unwrap();
     let mut res = String::new();
     for source in sources {
-        let option = format!("option value=\"{}\"; ",source.name);
+        let option = format!("<option value=\"{}\"></option>",source.name);
         res += &option;
     }
-    res
+    Html(render_source_search(&res).into_string())
+}
+pub async fn search_measurement_units(State(state): State<AppState>, Query(params): Query<SearchMeasurementUnitParam>) -> impl IntoResponse{
+    let measurements = sqlx::query_as::<_, FoundMeasurements>("SELECT id, name FROM measurement_unit WHERE name LIKE '%' || $1 || '%'")
+        .bind(params.measurement_unit_name)
+        .fetch_all(&state.pool).await.unwrap();
+    let mut res = String::new();
+    for measurement in measurements {
+        let option = format!("<option value=\"{}\"></option>",measurement.name);
+        res += &option;
+    }
+    Html(render_measurement_unit_search(&res).into_string())
+}
+pub async fn search_meals(State(state): State<AppState>, Query(params): Query<SearchMealParam>) -> impl IntoResponse{
+    let meals = sqlx::query_as::<_, FoundMeals>("SELECT id, name FROM meal WHERE name LIKE '%' || $1 || '%'")
+        .bind(params.pattern)
+        .fetch_all(&state.pool).await.unwrap();
+    let mut res = String::new();
+    let mut counter = 0;
+    for meal in meals {
+        let meal_price = get_meal_price(&state.pool,meal.id).await;
+        let form = format!("
+            <div style=\"border: 2px solid black;padding: 20px;\">
+                <h3>{}</h3>
+                <p>Total meal price: ${}</p>
+                <form hx-post=\"/create_ingredient\" hx-target=\"#form{}-result\">
+                    <input type=\"hidden\" name=\"meal_id\" value=\"{}\">
+                    <label for=\"name\">Ingredient name </label>
+                    <input type=\"text\" name=\"name\">
+                    <label for=\"source_name\">Source name </label>
+                    <input class=\"form-control\" type=\"text\" list=\"source{}\" name=\"source_name\" hx-get=\"/search_sources\" hx-params=\"*\" hx-trigger=\"input changed delay:500ms, keyup[key=='Enter'], load\" hx-target=\"#source{}\" hx-swap=\"innerHTML\">
+                    <datalist id=\"source{}\"></datalist>
+                    <label for=\"amount\">Amount </label>
+                    <input type=\"number\" name=\"amount\">
+                    <label for=\"measurement_unit_name\">Measurement Unit </label>
+                    <input class=\"form-control\" type=\"text\" list=\"measurements{}\" name=\"measurement_unit_name\" hx-get=\"/search_measurement_units\" hx-params=\"*\" hx-trigger=\"input changed delay:500ms, keyup[key=='Enter'], load\" hx-target=\"#measurements{}\" hx-swap=\"innerHTML\">
+                    <datalist id=\"measurements{}\"></datalist>
+                    <input type=\"submit\" value=\"Add ingredient\">
+                </form>
+                <div id=\"form{}-result\"></div>
+            </div>
+            ",
+            meal.name,
+            meal_price,
+            counter,
+            meal.id,
+            counter,
+            counter,
+            counter,
+            counter,
+            counter,
+            counter,
+            counter,
+            );
+        let meal_info = format!("{}",form);
+        res += &meal_info;
+        counter += 1;
+    }
+    Html(render_meal_search(&res).into_string())
+}
+pub async fn search_one_source(pool: &Pool<Sqlite>, pattern: String) -> i64{
+
+    let sources = sqlx::query_as::<_, FoundSources>("SELECT id, name, brand FROM source WHERE name LIKE '%' || $1 || '%'")
+        .bind(pattern)
+        .fetch_one(pool).await.unwrap();
+    sources.id
+}
+pub async fn search_one_measurement_unit(pool: &Pool<Sqlite>, pattern: String) -> i64{
+
+    let measurement = sqlx::query_as::<_, FoundMeasurements>("SELECT id, name FROM measurement_unit WHERE name LIKE '%' || $1 || '%'")
+        .bind(pattern)
+        .fetch_one(pool).await.unwrap();
+    measurement.id
 }
