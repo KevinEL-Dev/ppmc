@@ -193,6 +193,31 @@ pub async fn search_measurement_units(State(state): State<AppState>, Query(param
     }
     Html(render_measurement_unit_search(&res).into_string())
 }
+pub async fn get_ingredients_for_meal(pool: &Pool<Sqlite>,meal_id: i64) -> Vec<(String, f64)>{
+
+    let mut ingredient_ids = vec![];
+    let mut rows = sqlx::query("SELECT ingredient_id FROM meal_to_ingredient WHERE meal_id=?")
+        .bind(meal_id)
+        .fetch(pool);
+
+    while let Some(row) = rows.try_next().await.unwrap() {
+        let ingredient_id: i64 = row.try_get("ingredient_id").unwrap();
+        ingredient_ids.push(ingredient_id);
+    }
+
+    let mut list_of_ingredients: Vec<(String,f64)> = Vec::new();
+    for id in ingredient_ids {
+        let mut rows = sqlx::query("SELECT name, price FROM ingredient WHERE id=?")
+            .bind(id)
+            .fetch(pool);
+        while let Some(row) = rows.try_next().await.unwrap() {
+            let price: f64 = row.try_get("price").unwrap();
+            let name: String = row.try_get("name").unwrap();
+            list_of_ingredients.push((name,price));
+        }
+    }
+    list_of_ingredients
+}
 pub async fn search_meals(State(state): State<AppState>, Query(params): Query<SearchMealParam>) -> impl IntoResponse{
     let meals = sqlx::query_as::<_, FoundMeals>("SELECT id, name FROM meal WHERE name LIKE '%' || $1 || '%'")
         .bind(params.pattern)
@@ -201,10 +226,23 @@ pub async fn search_meals(State(state): State<AppState>, Query(params): Query<Se
     let mut counter = 0;
     for meal in meals {
         let meal_price = get_meal_price(&state.pool,meal.id).await;
+        let ingredients_in_meal = get_ingredients_for_meal(&state.pool,meal.id).await;
+        let mut html_ingredient_list = String::new();
+        for ingredient in ingredients_in_meal {
+            let ingredient_paragraph = format!("
+                    <p> {}, ingredient price: ${}</p>
+                ",
+                ingredient.0,
+                ingredient.1,
+                );
+            html_ingredient_list += &ingredient_paragraph;
+        }
         let form = format!("
             <div style=\"border: 2px solid black;padding: 20px;\">
-                <h3>{}</h3>
+                <h2>{}</h2>
                 <p>Total meal price: ${}</p>
+                <h3>Ingredient List</h3>
+                {}
                 <form hx-post=\"/create_ingredient\" hx-target=\"#form{}-result\">
                     <input type=\"hidden\" name=\"meal_id\" value=\"{}\">
                     <label for=\"name\">Ingredient name </label>
@@ -224,6 +262,7 @@ pub async fn search_meals(State(state): State<AppState>, Query(params): Query<Se
             ",
             meal.name,
             meal_price,
+            html_ingredient_list,
             counter,
             meal.id,
             counter,
